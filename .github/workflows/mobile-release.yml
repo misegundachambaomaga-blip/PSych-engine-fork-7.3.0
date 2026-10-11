@@ -31,55 +31,43 @@ jobs:
           # Soporte de Lua y videos
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
           haxelib install hxvlc --quiet
-      - name: Configure SScript for CI
+      - name: Configure SScript
         shell: bash
         run: |
           set -euo pipefail
-          MACRO="$(find .haxelib/SScript ~/haxelib/SScript \
-            -path '*/src/macro/Macro.hx' -print -quit 2>/dev/null || true)"
-          if [ -z "$MACRO" ]; then
-            MACRO="$(find .haxelib ~/haxelib \
-              -path '*/SScript/*/src/macro/Macro.hx' \
-              -print -quit 2>/dev/null || true)"
+          # SScript guarda su configuración en el directorio HOME.
+          # Responder "n" para usar los valores predeterminados.
+          if [ ! -f "$HOME/settings.cocoa" ]; then
+            printf 'n\n' | haxelib run SScript || true
           fi
-          if [ -z "$MACRO" ]; then
-            echo "::error::No se encontró Macro.hx de SScript."
-            haxelib path SScript
-            exit 1
-          fi
-          echo "Macro encontrada: $MACRO"
-          python3 - "$MACRO" <<'PY'
-          import pathlib
-          import sys
-          path = pathlib.Path(sys.argv[1])
-          source = path.read_text()
-          old = 'if (["yes", "y"].contains(Sys.stdin().readLine().toLowerCase().trim()))'
-          new = 'if (false)'
-          if old in source:
-              path.write_text(source.replace(old, new, 1))
-              print("Pregunta interactiva desactivada.")
-          elif 'Sys.stdin().readLine()' in source:
-              print("La macro usa otra forma de entrada interactiva.")
-              sys.exit(1)
-          else:
-              print("No se encontró la pregunta interactiva esperada.")
-              sys.exit(1)
-          PY
+          echo "=== SScript settings ==="
+          ls -la "$HOME/settings.cocoa" || true
+          haxelib path SScript
       - name: Verify SScript
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== Haxelib ==="
+          echo "=== Installed libraries ==="
           haxelib list
-          echo "=== SScript paths ==="
-          haxelib path SScript
-          if ! find .haxelib ~/haxelib \
-            -type f -path '*/tea/SScript.hx' \
-            -print -quit 2>/dev/null | grep -q .; then
-            echo "::error::No se encontró tea/SScript.hx."
+          echo "=== SScript source ==="
+          SSPATH="$(haxelib path SScript)"
+          echo "$SSPATH"
+          FOUND=false
+          while IFS= read -r path; do
+            [ -d "$path" ] || continue
+            if [ -f "$path/tea/SScript.hx" ]; then
+              echo "Found: $path/tea/SScript.hx"
+              FOUND=true
+            fi
+            if [ -f "$path/src/tea/SScript.hx" ]; then
+              echo "Found: $path/src/tea/SScript.hx"
+              FOUND=true
+            fi
+          done <<< "$SSPATH"
+          if [ "$FOUND" != "true" ]; then
+            echo "::error::SScript source tea/SScript.hx not found."
             exit 1
           fi
-          echo "SScript source encontrado."
       - name: Install iOS Build Tools
         shell: bash
         run: |
