@@ -1,8 +1,11 @@
-name: Mobile + Release
+name: iOS IPA
+
 on: workflow_dispatch
+
 jobs:
   iOS:
     runs-on: macos-13
+
     steps:
       - name: Checkout
         uses: actions/checkout@main
@@ -18,55 +21,21 @@ jobs:
           haxelib install hmm --quiet
           haxelib run hmm install --quiet
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
+          haxelib install hxvlc --quiet
 
-      - name: Compile
+      - name: Compile iOS
         run: haxelib run lime build ios -nosign -D officialBuild -final
 
-      - name: Make Ipa
+      - name: Package IPA
         run: |
+          mkdir -p export/release/ios/build/Release-iphoneos/Payload
           cd export/release/ios/build/Release-iphoneos
-          mkdir Payload
-          mv *.app Payload
+          mv *.app Payload/
           zip -r PsychEngine.ipa Payload
 
-      - name: Make Zip For Release
-        run: |
-           cd export/release/ios/build/Release-iphoneos
-           zip PsychEngine-iOS.zip PsychEngine.ipa
-
-      - name: Upload Artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@main
         with:
-          name: iOSBuild
-          path: export/release/ios/build/Release-iphoneos/*.zip
+          name: PsychEngine-iOS
+          path: export/release/ios/build/Release-iphoneos/PsychEngine.ipa
           if-no-files-found: error
-  Releaser:
-    needs: [Android, iOS]
-    runs-on: ubuntu-latest
-    permissions: write-all
-    steps:
-      - name: Download Android Build
-        uses: actions/download-artifact@main
-        with:
-           name: androidBuild
-           path: /home/runner
-
-      - name: Move Android File
-        run: mv /home/runner/PsychEngine-release.apk /home/runner/PsychEngine-Android.apk
-
-      - name: Download iOS Build
-        uses: actions/download-artifact@main
-        with:
-           name: iOSBuild
-           path: /home/runner
-
-      - name: Publish The Release
-        uses: marvinpinto/action-automatic-releases@latest
-        with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          prerelease: true
-          automatic_release_tag: "dev-5112f18"
-          title: "DevBuild 5112f18"
-          files: |
-            /home/runner/*.apk
-            /home/runner/*.zip
