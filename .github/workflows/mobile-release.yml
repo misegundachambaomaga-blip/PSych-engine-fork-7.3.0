@@ -1,41 +1,84 @@
 name: iOS IPA
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   iOS:
     runs-on: macos-14
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
 
       - name: Setup Haxe
         uses: krdlab/setup-haxe@master
         with:
           haxe-version: 4.3.4
 
-      - name: Install Libraries
+      - name: Setup Haxelib
         run: |
           haxelib setup ~/haxelib
           haxelib install hmm --quiet
+
+      - name: Install Libraries
+        run: |
           haxelib run hmm install --quiet
+
+          # Ensure SScript is installed
+          haxelib git SScript https://github.com/CCobaltDev/SScript-Archive main
+
+          # Required Lua and video libraries
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
           haxelib install hxvlc --quiet
 
+      - name: Verify Haxe Libraries
+        run: |
+          echo "=== Installed libraries ==="
+          haxelib list
+
+          echo "=== SScript library path ==="
+          haxelib path SScript
+
+          echo "=== Searching for SScript source ==="
+          find ~/haxelib -type f -path '*/tea/SScript.hx' -print
+
+      - name: Install iOS Build Tools
+        run: |
+          haxelib install lime 8.3.2 --quiet
+          haxelib run lime setup ios
+
       - name: Compile iOS
-        run: haxelib run lime build ios -nosign -D officialBuild -final
+        run: |
+          haxelib run lime build ios -nosign -D officialBuild -final
 
       - name: Package IPA
+        shell: bash
         run: |
-          mkdir -p export/release/ios/build/Release-iphoneos/Payload
-          cd export/release/ios/build/Release-iphoneos
-          mv *.app Payload/
-          zip -r PsychEngine.ipa Payload
+          set -e
+
+          APP_PATH="$(find export/release/ios -type d -name '*.app' -print -quit)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No se encontró el archivo .app."
+            echo "Contenido de export/release/ios:"
+            find export/release/ios -maxdepth 5 -print || true
+            exit 1
+          fi
+
+          mkdir -p /tmp/ipa/Payload
+          cp -R "$APP_PATH" /tmp/ipa/Payload/
+          cd /tmp/ipa
+          zip -r "$GITHUB_WORKSPACE/PsychEngine.ipa" Payload
 
       - name: Upload IPA
-        uses: actions/upload-artifact@main
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: PsychEngine-iOS
-          path: export/release/ios/build/Release-iphoneos/PsychEngine.ipa
+          path: PsychEngine.ipa
           if-no-files-found: error
