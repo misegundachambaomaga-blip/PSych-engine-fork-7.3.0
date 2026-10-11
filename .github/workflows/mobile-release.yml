@@ -21,7 +21,9 @@ jobs:
           haxe-version: 4.3.4
 
       - name: Setup Haxelib
+        shell: bash
         run: |
+          set -e
           haxelib setup ~/haxelib
           haxelib install hmm --quiet
 
@@ -29,34 +31,15 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          # Install project dependencies
           haxelib run hmm install --quiet
 
-          # Psych Engine 0.7.3 requires SScript 7.7.0.
-          # Download the archived version and install it through Haxelib.
-          python3 - <<'PY'
-          import urllib.request
-          import json
+          # Remove incompatible SScript versions
+          haxelib remove SScript || true
 
-          api = "https://api.github.com/repos/CCobaltDev/SScript-Archive/contents/archives"
-          request = urllib.request.Request(
-              api,
-              headers={"Accept": "application/vnd.github+json",
-                       "User-Agent": "PsychEngine-iOS-Build"}
-          )
-
-          with urllib.request.urlopen(request, timeout=30) as response:
-              items = json.load(response)
-
-          for item in items:
-              print(item["name"])
-          PY
-
-          echo "Checking installed SScript..."
-          haxelib list
-          haxelib path SScript || true
-
-          echo "Checking for SScript source..."
-          find ~/haxelib -type f -path '*/tea/SScript.hx' -print
+          # Install the version required by Psych Engine 0.7.3
+          haxelib install SScript 7.7.0 --always --quiet
 
           # Required Lua and video libraries
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
@@ -66,26 +49,53 @@ jobs:
         shell: bash
         run: |
           set -e
-          SSPATH="$(haxelib path SScript)"
-          echo "$SSPATH"
 
-          if ! find ~/haxelib -type f -path '*/tea/SScript.hx' -print -quit | grep -q .; then
-            echo "::error::SScript.hx was not found. The installed library does not provide tea.SScript."
+          echo "=== Haxelib configuration ==="
+          haxelib config
+
+          echo "=== Installed SScript ==="
+          haxelib list
+          haxelib path SScript
+
+          echo "=== Verify tea.SScript source ==="
+          SSPATH="$(haxelib path SScript)"
+
+          FOUND=false
+          while IFS= read -r path; do
+            [ -d "$path" ] || continue
+
+            if [ -f "$path/tea/SScript.hx" ]; then
+              echo "Found: $path/tea/SScript.hx"
+              FOUND=true
+            fi
+
+            if [ -f "$path/src/tea/SScript.hx" ]; then
+              echo "Found: $path/src/tea/SScript.hx"
+              FOUND=true
+            fi
+          done <<< "$SSPATH"
+
+          if [ "$FOUND" != "true" ]; then
+            echo "::error::SScript 7.7.0 was installed, but tea.SScript.hx was not found in its Haxelib paths."
             exit 1
           fi
 
       - name: Install iOS Build Tools
+        shell: bash
         run: |
+          set -e
           haxelib run lime setup ios
 
       - name: Compile iOS
+        shell: bash
         run: |
+          set -e
           haxelib run lime build ios -nosign -D officialBuild -final
 
       - name: Package IPA
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           APP_PATH="$(find export/release/ios -type d -name '*.app' -print -quit)"
 
