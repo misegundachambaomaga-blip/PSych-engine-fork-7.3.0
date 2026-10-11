@@ -50,11 +50,6 @@
       "dir": null,
       "ref": "main",
       "url": "https://github.com/LimeExtensions/extension-androidtools"
-    },
-    {
-      "name": "hxCodec",
-      "type": "haxelib",
-      "version": "2.6.1"
     }
   ]
 }
