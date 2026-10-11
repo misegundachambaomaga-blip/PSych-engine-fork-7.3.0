@@ -39,12 +39,46 @@ jobs:
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
           haxelib install hxvlc --quiet
 
-      - name: Verify SScript
+      - name: Fix SScript Setup Prompt
         shell: bash
         run: |
           set -euo pipefail
 
-          haxelib list
+          python3 <<'PY'
+          from pathlib import Path
+          import os
+
+          root = Path(os.environ["GITHUB_WORKSPACE"]) / ".haxelib"
+          files = list(root.glob("SScript/**/src/macro/Macro.hx"))
+
+          if not files:
+              raise SystemExit("ERROR: SScript Macro.hx not found.")
+
+          patched = 0
+
+          for path in files:
+              source = path.read_text()
+              old = "Sys.stdin().readLine()"
+              new = '"n"'
+
+              if old in source:
+                  source = source.replace(old, new)
+                  path.write_text(source)
+                  patched += 1
+                  print(f"Patched interactive prompt: {path}")
+
+          if patched == 0:
+              raise SystemExit(
+                  "ERROR: Expected SScript input expression was not found."
+              )
+
+          print("SScript will use the default settings without prompting.")
+          PY
+
+      - name: Verify SScript
+        shell: bash
+        run: |
+          set -euo pipefail
 
           python3 <<'PY'
           from pathlib import Path
@@ -57,12 +91,17 @@ jobs:
               raise SystemExit("ERROR: SScript Macro.hx not found.")
 
           for path in files:
-              print(f"SScript macro found: {path}")
               source = path.read_text()
 
               if "Sys.stdin().readLine()" in source:
-                  print("Interactive prompt detected; it will receive N during compilation.")
+                  raise SystemExit(
+                      f"ERROR: Interactive prompt remains in {path}"
+                  )
+
+              print(f"Verified: {path}")
           PY
+
+          haxelib list
 
       - name: Install iOS Build Tools
         shell: bash
@@ -76,15 +115,14 @@ jobs:
           set -uo pipefail
 
           set +e
-          yes n | haxelib run lime build ios -nosign -D officialBuild -final 2>&1 | tee ios-build.log
-          BUILD_STATUS=${PIPESTATUS[1]}
+          haxelib run lime build ios -nosign -D officialBuild -final 2>&1 | tee ios-build.log
+          BUILD_STATUS=${PIPESTATUS[0]}
           set -e
 
           echo ""
           echo "========== COMPILATION RESULT =========="
           echo "Exit code: $BUILD_STATUS"
           echo "========== LAST 150 LINES =========="
-
           tail -n 150 ios-build.log || true
 
           if [ "$BUILD_STATUS" -ne 0 ]; then
@@ -109,7 +147,6 @@ jobs:
 
           rm -rf /tmp/ipa
           mkdir -p /tmp/ipa/Payload
-
           cp -R "$APP_PATH" /tmp/ipa/Payload/
 
           cd /tmp/ipa
