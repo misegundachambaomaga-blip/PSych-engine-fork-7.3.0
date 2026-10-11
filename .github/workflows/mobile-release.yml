@@ -1,98 +1,110 @@
 name: iOS IPA
-
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   iOS:
     runs-on: macos-14
     timeout-minutes: 360
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Haxe
         uses: krdlab/setup-haxe@master
         with:
           haxe-version: 4.3.4
-
       - name: Setup Haxelib
         shell: bash
         run: |
           set -e
           haxelib setup ~/haxelib
           haxelib install hmm --quiet
-
       - name: Install Libraries
         shell: bash
         run: |
           set -e
-
           haxelib run hmm install --quiet
-
-          # Psych Engine 0.7.3
+          # SScript para Psych Engine 0.7.3
           haxelib remove SScript || true
           haxelib install SScript 7.7.0 --always --quiet
-
-          # Lua and video support
+          # Soporte de Lua y videos
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
           haxelib install hxvlc --quiet
-
+      - name: Configure SScript for CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          MACRO="$(find .haxelib/SScript ~/haxelib/SScript \
+            -path '*/src/macro/Macro.hx' -print -quit 2>/dev/null || true)"
+          if [ -z "$MACRO" ]; then
+            MACRO="$(find .haxelib ~/haxelib \
+              -path '*/SScript/*/src/macro/Macro.hx' \
+              -print -quit 2>/dev/null || true)"
+          fi
+          if [ -z "$MACRO" ]; then
+            echo "::error::No se encontró Macro.hx de SScript."
+            haxelib path SScript
+            exit 1
+          fi
+          echo "Macro encontrada: $MACRO"
+          python3 - "$MACRO" <<'PY'
+          import pathlib
+          import sys
+          path = pathlib.Path(sys.argv[1])
+          source = path.read_text()
+          old = 'if (["yes", "y"].contains(Sys.stdin().readLine().toLowerCase().trim()))'
+          new = 'if (false)'
+          if old in source:
+              path.write_text(source.replace(old, new, 1))
+              print("Pregunta interactiva desactivada.")
+          elif 'Sys.stdin().readLine()' in source:
+              print("La macro usa otra forma de entrada interactiva.")
+              sys.exit(1)
+          else:
+              print("No se encontró la pregunta interactiva esperada.")
+              sys.exit(1)
+          PY
       - name: Verify SScript
         shell: bash
         run: |
-          set -e
-
-          echo "=== Haxelib configuration ==="
-          haxelib config
+          set -euo pipefail
+          echo "=== Haxelib ==="
           haxelib list
+          echo "=== SScript paths ==="
           haxelib path SScript
-
-          SSPATH="$(haxelib path SScript)"
-          FOUND=false
-
-          while IFS= read -r path; do
-            [ -d "$path" ] || continue
-
-            if [ -f "$path/tea/SScript.hx" ] || [ -f "$path/src/tea/SScript.hx" ]; then
-              FOUND=true
-              break
-            fi
-          done <<< "$SSPATH"
-
-          if [ "$FOUND" != "true" ]; then
-            echo "::error::SScript source tea/SScript.hx not found."
+          if ! find .haxelib ~/haxelib \
+            -type f -path '*/tea/SScript.hx' \
+            -print -quit 2>/dev/null | grep -q .; then
+            echo "::error::No se encontró tea/SScript.hx."
             exit 1
           fi
-
-      - name: Compile iOS
+          echo "SScript source encontrado."
+      - name: Install iOS Build Tools
         shell: bash
         run: |
           set -e
-          printf 'n\nn\nn\nn\nn\n' | haxelib run lime build ios -nosign -D officialBuild -final
-
+          haxelib run lime setup ios
+      - name: Compile iOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          haxelib run lime build ios -nosign -D officialBuild -final
       - name: Package IPA
         shell: bash
         run: |
           set -euo pipefail
-
-          APP_PATH="$(find export/release/ios -type d -name '*.app' -print -quit)"
-
+          APP_PATH="$(find export/release/ios \
+            -type d -name '*.app' -print -quit)"
           if [ -z "$APP_PATH" ]; then
-            echo "::error::No .app bundle was generated."
+            echo "::error::No se encontró el bundle .app."
             find export/release/ios -maxdepth 5 -print || true
             exit 1
           fi
-
           mkdir -p /tmp/ipa/Payload
           cp -R "$APP_PATH" /tmp/ipa/Payload/
           cd /tmp/ipa
           zip -r "$GITHUB_WORKSPACE/PsychEngine.ipa" Payload
-
       - name: Upload IPA
         if: success()
         uses: actions/upload-artifact@v4
