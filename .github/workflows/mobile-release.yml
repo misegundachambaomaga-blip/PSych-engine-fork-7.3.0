@@ -1,126 +1,188 @@
 name: iOS IPA
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   iOS:
     runs-on: macos-14
     timeout-minutes: 360
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Haxe
         uses: krdlab/setup-haxe@master
         with:
           haxe-version: 4.3.4
+
       - name: Setup Haxelib
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           haxelib setup ~/haxelib
           haxelib install hmm --quiet
+
       - name: Install Libraries
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
           haxelib run hmm install --quiet
-          # Remove duplicate SScript installations.
+
           haxelib remove SScript || true
-          # Install the version used by Psych Engine 0.7.3.
           haxelib install SScript 7.7.0 --always --quiet
-          # Lua and video support.
+
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
           haxelib install hxvlc --quiet
+
       - name: Fix SScript Interactive Setup
         shell: bash
         run: |
           set -euo pipefail
+
           python3 <<'PY'
           from pathlib import Path
           import os
+
           workspace = Path(os.environ["GITHUB_WORKSPACE"])
           macro_files = list(
-              (workspace / ".haxelib").glob("SScript/**/src/macro/Macro.hx")
+              (workspace / ".haxelib").glob(
+                  "SScript/**/src/macro/Macro.hx"
+              )
           )
+
           if not macro_files:
-              raise SystemExit("ERROR: SScript Macro.hx not found.")
+              raise SystemExit(
+                  "ERROR: SScript Macro.hx not found."
+              )
+
           patched = 0
+
           for path in macro_files:
               source = path.read_text()
               lines = source.splitlines(keepends=True)
               output = []
-              changed = False
+
               for line in lines:
                   if "Sys.stdin().readLine()" in line:
-                      indent = line[:len(line) - len(line.lstrip())]
-                      output.append(
-                          indent + 'if (false) {\n'
-                      )
-                      changed = True
+                      indent = line[
+                          :len(line) - len(line.lstrip())
+                      ]
+                      output.append(indent + "if (false) {\n")
                       patched += 1
-                      print(f"Disabled interactive setup condition: {path}")
+                      print(f"Patched: {path}")
                   else:
                       output.append(line)
-              if changed:
+
+              if patched:
                   path.write_text("".join(output))
+
           if patched == 0:
               raise SystemExit(
-                  "ERROR: No Sys.stdin().readLine() call was patched."
+                  "ERROR: No interactive SScript prompt was patched."
               )
-          print(f"Patched {patched} interactive condition(s).")
+
+          print(f"Patched {patched} line(s).")
           PY
+
       - name: Verify SScript
         shell: bash
         run: |
           set -euo pipefail
+
           python3 <<'PY'
           from pathlib import Path
           import os
+
           root = Path(os.environ["GITHUB_WORKSPACE"]) / ".haxelib"
           source_found = False
           prompt_found = False
+
           for path in root.glob("SScript/**/src/tea/SScript.hx"):
               print(f"SScript source found: {path}")
               source_found = True
+
           for path in root.glob("SScript/**/src/macro/Macro.hx"):
-              text = path.read_text()
-              if "Sys.stdin().readLine()" in text:
+              content = path.read_text()
+              if "Sys.stdin().readLine()" in content:
                   print(f"Interactive input still present: {path}")
                   prompt_found = True
               else:
-                  print(f"Macro verified: {path}")
+                  print(f"Macro checked: {path}")
+
           if not source_found:
-              raise SystemExit("ERROR: tea.SScript source not found.")
+              raise SystemExit(
+                  "ERROR: tea.SScript source not found."
+              )
+
           if prompt_found:
-              raise SystemExit("ERROR: Interactive input still exists.")
+              raise SystemExit(
+                  "ERROR: Interactive input still exists."
+              )
           PY
+
           haxelib list
+
       - name: Install iOS Build Tools
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           haxelib run lime setup ios
+
       - name: Compile iOS
         shell: bash
         run: |
-          set -euo pipefail
-          haxelib run lime build ios -nosign -D officialBuild -final
+          set -uo pipefail
+
+          set +e
+          haxelib run lime build ios -nosign -D officialBuild -final 2>&1 | tee ios-build.log
+          BUILD_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          echo ""
+          echo "========== COMPILATION RESULT =========="
+          echo "Exit code: $BUILD_STATUS"
+          echo "========== LAST 150 LINES =========="
+
+          tail -n 150 ios-build.log || true
+
+          if [ "$BUILD_STATUS" -ne 0 ]; then
+            echo "::error::iOS compilation failed with exit code $BUILD_STATUS"
+            exit "$BUILD_STATUS"
+          fi
+
       - name: Package IPA
         shell: bash
         run: |
           set -euo pipefail
+
           APP_PATH="$(find export/release/ios \
             -type d -name '*.app' -print -quit)"
+
           if [ -z "$APP_PATH" ]; then
             echo "::error::No .app bundle was generated."
-            find export/release/ios -maxdepth 5 -print || true
+            echo "Contents of export/release/ios:"
+            find export/release/ios -maxdepth 6 -print || true
             exit 1
           fi
+
+          echo "App found: $APP_PATH"
+
+          rm -rf /tmp/ipa
           mkdir -p /tmp/ipa/Payload
+
           cp -R "$APP_PATH" /tmp/ipa/Payload/
+
           cd /tmp/ipa
           zip -r "$GITHUB_WORKSPACE/PsychEngine.ipa" Payload
+
+          test -s "$GITHUB_WORKSPACE/PsychEngine.ipa"
+
       - name: Upload IPA
         if: success()
         uses: actions/upload-artifact@v4
