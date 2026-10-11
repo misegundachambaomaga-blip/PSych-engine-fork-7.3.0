@@ -25,101 +25,77 @@ jobs:
         run: |
           set -e
           haxelib run hmm install --quiet
-          # SScript compatible con Psych Engine 0.7.3
+          # Remove duplicate SScript installations.
+          haxelib remove SScript || true
+          # Install the version used by Psych Engine 0.7.3.
           haxelib install SScript 7.7.0 --always --quiet
-          # Lua
+          # Lua and video support.
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
-          # Video
           haxelib install hxvlc --quiet
       - name: Fix SScript Interactive Setup
         shell: bash
         run: |
           set -euo pipefail
           python3 <<'PY'
-          import os
           from pathlib import Path
-          roots = [
-              Path(os.environ["GITHUB_WORKSPACE"]) / ".haxelib",
-              Path.home() / "haxelib",
-          ]
-          # Also inspect paths reported by Haxelib.
-          import subprocess
-          result = subprocess.run(
-              ["haxelib", "path", "SScript"],
-              text=True,
-              stdout=subprocess.PIPE,
-              stderr=subprocess.STDOUT,
+          import os
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          macro_files = list(
+              (workspace / ".haxelib").glob("SScript/**/src/macro/Macro.hx")
           )
-          for line in result.stdout.splitlines():
-              path = Path(line.strip())
-              if path.is_dir():
-                  roots.append(path)
-          targets = set()
-          for root in roots:
-              if not root.exists():
-                  continue
-              if root.is_file() and root.name == "Macro.hx":
-                  targets.add(root)
-                  continue
-              for current, dirs, files in os.walk(root):
-                  dirs[:] = [
-                      d for d in dirs
-                      if d not in {".git", "node_modules"}
-                  ]
-                  if "Macro.hx" in files:
-                      candidate = Path(current) / "Macro.hx"
-                      if candidate.parts[-2:] == ("macro", "Macro.hx"):
-                          targets.add(candidate)
-          old = 'if (["yes", "y"].contains(Sys.stdin().readLine().toLowerCase().trim()))'
-          new = 'if (false)'
-          changed = 0
-          for path in sorted(targets):
-              source = path.read_text(errors="replace")
-              if old in source:
-                  path.write_text(source.replace(old, new, 1))
-                  print(f"Patched: {path}")
-                  changed += 1
-          if changed == 0:
-              print("No matching prompt found. Searched files:")
-              for path in sorted(targets):
-                  print(path)
+          if not macro_files:
+              raise SystemExit("ERROR: SScript Macro.hx not found.")
+          patched = 0
+          for path in macro_files:
+              source = path.read_text()
+              lines = source.splitlines(keepends=True)
+              output = []
+              changed = False
+              for line in lines:
+                  if "Sys.stdin().readLine()" in line:
+                      indent = line[:len(line) - len(line.lstrip())]
+                      output.append(
+                          indent + 'if (false) {\n'
+                      )
+                      changed = True
+                      patched += 1
+                      print(f"Disabled interactive setup condition: {path}")
+                  else:
+                      output.append(line)
+              if changed:
+                  path.write_text("".join(output))
+          if patched == 0:
               raise SystemExit(
-                  "Could not patch SScript's interactive setup prompt."
+                  "ERROR: No Sys.stdin().readLine() call was patched."
               )
-          print(f"Patched {changed} SScript macro file(s).")
+          print(f"Patched {patched} interactive condition(s).")
           PY
       - name: Verify SScript
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== Haxelib libraries ==="
-          haxelib list
-          echo "=== SScript path ==="
-          haxelib path SScript
-          echo "=== Verify source and patch ==="
           python3 <<'PY'
-          import os
           from pathlib import Path
+          import os
           root = Path(os.environ["GITHUB_WORKSPACE"]) / ".haxelib"
-          found = False
-          for current, dirs, files in os.walk(root):
-              if "SScript.hx" in files and Path(current).name == "tea":
-                  print("Found SScript:", Path(current) / "SScript.hx")
-                  found = True
-              if "Macro.hx" in files and Path(current).name == "macro":
-                  path = Path(current) / "Macro.hx"
-                  source = path.read_text(errors="replace")
-                  if 'Sys.stdin().readLine()' in source:
-                      raise SystemExit(
-                          f"Interactive prompt still present: {path}"
-                      )
-                  if 'if (false)' in source:
-                      print("Verified patched macro:", path)
-          if not found:
-              raise SystemExit(
-                  "SScript.hx was not found under the project's .haxelib directory."
-              )
+          source_found = False
+          prompt_found = False
+          for path in root.glob("SScript/**/src/tea/SScript.hx"):
+              print(f"SScript source found: {path}")
+              source_found = True
+          for path in root.glob("SScript/**/src/macro/Macro.hx"):
+              text = path.read_text()
+              if "Sys.stdin().readLine()" in text:
+                  print(f"Interactive input still present: {path}")
+                  prompt_found = True
+              else:
+                  print(f"Macro verified: {path}")
+          if not source_found:
+              raise SystemExit("ERROR: tea.SScript source not found.")
+          if prompt_found:
+              raise SystemExit("ERROR: Interactive input still exists.")
           PY
+          haxelib list
       - name: Install iOS Build Tools
         shell: bash
         run: |
@@ -137,7 +113,7 @@ jobs:
           APP_PATH="$(find export/release/ios \
             -type d -name '*.app' -print -quit)"
           if [ -z "$APP_PATH" ]; then
-            echo "::error::No se encontró el bundle .app."
+            echo "::error::No .app bundle was generated."
             find export/release/ios -maxdepth 5 -print || true
             exit 1
           fi
@@ -151,4 +127,4 @@ jobs:
         with:
           name: PsychEngine-iOS
           path: PsychEngine.ipa
-          if-no-files-found:
+          if-no-files-found: error
