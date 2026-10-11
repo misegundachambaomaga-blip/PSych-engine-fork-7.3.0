@@ -32,16 +32,13 @@ jobs:
         run: |
           set -e
 
-          # Install project dependencies
           haxelib run hmm install --quiet
 
-          # Remove incompatible SScript versions
+          # Psych Engine 0.7.3
           haxelib remove SScript || true
-
-          # Install the version required by Psych Engine 0.7.3
           haxelib install SScript 7.7.0 --always --quiet
 
-          # Required Lua and video libraries
+          # Lua and video support
           haxelib git linc_luajit https://github.com/superpowers04/linc_luajit.git 1906c4a96f6bb6df66562b3f24c62f4c5bba14a7
           haxelib install hxvlc --quiet
 
@@ -52,45 +49,31 @@ jobs:
 
           echo "=== Haxelib configuration ==="
           haxelib config
-
-          echo "=== Installed SScript ==="
           haxelib list
           haxelib path SScript
 
-          echo "=== Verify tea.SScript source ==="
           SSPATH="$(haxelib path SScript)"
-
           FOUND=false
+
           while IFS= read -r path; do
             [ -d "$path" ] || continue
 
-            if [ -f "$path/tea/SScript.hx" ]; then
-              echo "Found: $path/tea/SScript.hx"
+            if [ -f "$path/tea/SScript.hx" ] || [ -f "$path/src/tea/SScript.hx" ]; then
               FOUND=true
-            fi
-
-            if [ -f "$path/src/tea/SScript.hx" ]; then
-              echo "Found: $path/src/tea/SScript.hx"
-              FOUND=true
+              break
             fi
           done <<< "$SSPATH"
 
           if [ "$FOUND" != "true" ]; then
-            echo "::error::SScript 7.7.0 was installed, but tea.SScript.hx was not found in its Haxelib paths."
+            echo "::error::SScript source tea/SScript.hx not found."
             exit 1
           fi
-
-      - name: Install iOS Build Tools
-        shell: bash
-        run: |
-          set -e
-          haxelib run lime setup ios
 
       - name: Compile iOS
         shell: bash
         run: |
           set -e
-          haxelib run lime build ios -nosign -D officialBuild -final
+          printf 'n\nn\nn\nn\nn\n' | haxelib run lime build ios -nosign -D officialBuild -final
 
       - name: Package IPA
         shell: bash
