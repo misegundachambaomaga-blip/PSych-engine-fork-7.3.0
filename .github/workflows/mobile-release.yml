@@ -59,20 +59,16 @@ jobs:
           for path in files:
               source = path.read_text()
               old = "Sys.stdin().readLine()"
-              new = '"n"'
 
               if old in source:
-                  source = source.replace(old, new)
-                  path.write_text(source)
+                  path.write_text(source.replace(old, '"n"'))
                   patched += 1
-                  print(f"Patched interactive prompt: {path}")
+                  print(f"Patched: {path}")
 
           if patched == 0:
               raise SystemExit(
-                  "ERROR: Expected SScript input expression was not found."
+                  "ERROR: SScript interactive input was not found."
               )
-
-          print("SScript will use the default settings without prompting.")
           PY
 
       - name: Verify SScript
@@ -161,3 +157,13 @@ jobs:
           name: PsychEngine-iOS
           path: PsychEngine.ipa
           if-no-files-found: error
+
+      - name: Upload iOS Build Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Build-Logs
+          path: |
+            ios-build.log
+            export/release/ios/build/Logs/**
+          if-no-files-found: warn
